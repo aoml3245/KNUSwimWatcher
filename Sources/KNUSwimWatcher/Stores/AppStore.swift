@@ -382,14 +382,42 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func resetAutoRegistrationLock() {
+    func resetAutoRegistrationLock(
+        removeAttemptedCourseFromWatchList: Bool = false
+    ) {
+        let attemptedCourseID = settings.autoRegistrationAttemptedCourseID
+        var removedSelectionCount = 0
+        if removeAttemptedCourseFromWatchList, let attemptedCourseID {
+            let removedIDs = Set(
+                settings.selectedClasses
+                    .filter { $0.courseID == attemptedCourseID }
+                    .map(\.id)
+            )
+            removedSelectionCount = removedIDs.count
+            settings.selectedClasses.removeAll { removedIDs.contains($0.id) }
+            selectionStatuses.removeAll { removedIDs.contains($0.id) }
+            for id in removedIDs {
+                availabilityState.removeValue(forKey: id.uuidString)
+            }
+            persistAvailability()
+        }
         settings.autoRegistrationEnabled = false
         settings.autoRegistrationAttemptedCourseID = nil
         settings.autoRegistrationAttemptedAt = nil
         settings.autoRegistrationResult = nil
-        statusMessage = "자동 신청 잠금을 초기화했습니다. 필요하면 다시 켜세요."
+        statusMessage = removedSelectionCount > 0
+            ? "신청 잠금을 초기화하고 해당 반을 감시 목록에서 해제했습니다."
+            : "자동 신청 잠금을 초기화했습니다. 필요하면 다시 켜세요."
         Task {
-            await telemetry.info("Registration", "automatic_registration_lock_reset")
+            await telemetry.info(
+                "Registration",
+                "automatic_registration_lock_reset",
+                fields: [
+                    "attempted_course_watch_removed":
+                        String(removedSelectionCount > 0),
+                    "removed_selection_count": String(removedSelectionCount)
+                ]
+            )
         }
     }
 

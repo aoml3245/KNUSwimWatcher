@@ -178,6 +178,7 @@ private struct ClassSelectionView: View {
 
 private struct MonitoringSettingsView: View {
     @ObservedObject var store: AppStore
+    @State private var isResetConfirmationPresented = false
 
     var body: some View {
         Form {
@@ -218,7 +219,7 @@ private struct MonitoringSettingsView: View {
                     .foregroundStyle(.secondary)
                 if store.settings.autoRegistrationAttemptedCourseID != nil {
                     Button("다음 등록을 위해 신청 잠금 초기화") {
-                        store.resetAutoRegistrationLock()
+                        isResetConfirmationPresented = true
                     }
                     .disabled(store.isBusy)
                 }
@@ -252,9 +253,27 @@ private struct MonitoringSettingsView: View {
             Section("동작 원칙") {
                 Label("5분 기본 간격으로 로그인 1회·목록 조회 1회", systemImage: "checkmark.shield")
                 Label("빈자리 상태가 바뀔 때만 알림", systemImage: "bell.badge")
-                Label("자동 신청과 결제는 수행하지 않음", systemImage: "hand.raised")
+                Label("자동 신청은 명시적으로 켠 경우에만 수행", systemImage: "checkmark.shield")
+                Label("입금·카드 결제는 자동으로 수행하지 않음", systemImage: "hand.raised")
             }
         }
         .formStyle(.grouped)
+        .confirmationDialog(
+            "자동 신청 잠금을 초기화할까요?",
+            isPresented: $isResetConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("잠금만 초기화") {
+                store.resetAutoRegistrationLock()
+            }
+            Button("초기화하고 신청 반 감시 해제", role: .destructive) {
+                store.resetAutoRegistrationLock(
+                    removeAttemptedCourseFromWatchList: true
+                )
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("자동 신청은 꺼진 상태로 초기화됩니다. 신청했던 반을 계속 감시할지, 감시 목록에서도 해제할지 선택하세요. 잠금만 초기화한 뒤 자동 신청을 다시 켜면 같은 반에도 재신청할 수 있습니다.")
+        }
     }
 }
