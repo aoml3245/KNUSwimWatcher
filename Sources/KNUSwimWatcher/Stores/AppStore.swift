@@ -145,6 +145,8 @@ final class AppStore: ObservableObject {
             return
         }
         await telemetry.info("Monitor", "course_refresh_started")
+        let previousConnectionState = connectionState
+        let previousStatusMessage = statusMessage
         isBusy = true
         connectionState = .checking
         statusMessage = "로그인하고 수영반 목록을 불러오는 중…"
@@ -170,6 +172,15 @@ final class AppStore: ObservableObject {
                 ]
             )
         } catch {
+            if isCancellation(error) {
+                connectionState = previousConnectionState
+                statusMessage = previousStatusMessage
+                await telemetry.debug(
+                    "Monitor",
+                    "course_refresh_cancelled"
+                )
+                return
+            }
             await telemetry.error(
                 "Monitor",
                 "course_refresh_failed",
@@ -181,11 +192,10 @@ final class AppStore: ObservableObject {
 
     func ensureCandidateRowsLoaded() async {
         guard candidateRows.isEmpty else { return }
-        for _ in 0..<120 where isBusy {
-            try? await Task.sleep(for: .milliseconds(500))
-        }
-        guard candidateRows.isEmpty, !isBusy else { return }
-        await refreshCourses()
+        guard !isBusy else { return }
+        // Keep the refresh independent from SwiftUI's view-scoped `.task`.
+        // Closing or redrawing the tab must not cancel the network request.
+        Task { await refreshCourses() }
     }
 
     func addSelection(from row: CourseRow) {
@@ -450,6 +460,8 @@ final class AppStore: ObservableObject {
                 "selection_count": String(settings.selectedClasses.count)
             ]
         )
+        let previousConnectionState = connectionState
+        let previousStatusMessage = statusMessage
         isBusy = true
         connectionState = .checking
         statusMessage = "선택한 반의 빈자리를 확인하는 중…"
@@ -513,6 +525,16 @@ final class AppStore: ObservableObject {
                 statuses: newStatuses
             )
         } catch {
+            if isCancellation(error) {
+                connectionState = previousConnectionState
+                statusMessage = previousStatusMessage
+                await telemetry.debug(
+                    "Monitor",
+                    "availability_check_cancelled",
+                    fields: ["manual": String(manual)]
+                )
+                return
+            }
             await telemetry.error(
                 "Monitor",
                 "availability_check_failed",
@@ -762,6 +784,18 @@ final class AppStore: ObservableObject {
             return "ns_error_\(nsError.domain)_\(nsError.code)"
         }
         return String(describing: type(of: error))
+    }
+
+    private func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+        if let urlError = error as? URLError {
+            return urlError.code == .cancelled
+        }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain
+            && nsError.code == NSURLErrorCancelled
     }
 
     private static let settingsKey = "watcher.settings.v1"
