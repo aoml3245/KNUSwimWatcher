@@ -46,6 +46,11 @@ final class AppStore: ObservableObject {
             )
         }
         start()
+        if ProcessInfo.processInfo.arguments.contains("--test-notification") {
+            Task { [weak self] in
+                await self?.testNotification()
+            }
+        }
     }
 
     deinit {
@@ -590,25 +595,39 @@ final class AppStore: ObservableObject {
     }
 
     func testNotification() async {
+        await telemetry.info("Notification", "test_notification_started")
         do {
             let granted = try await notifications.requestAuthorization()
+            await telemetry.info(
+                "Notification",
+                "test_notification_authorization_completed",
+                fields: ["granted": String(granted)]
+            )
             guard granted else {
-                fail("알림 권한이 허용되지 않았습니다.")
+                statusMessage = "알림 권한이 꺼져 있습니다. 시스템 설정 > 알림에서 허용하세요."
+                await telemetry.error(
+                    "Notification",
+                    "test_notification_not_authorized"
+                )
                 return
             }
+            await telemetry.info("Notification", "test_notification_send_started")
             try await notifications.send(
                 title: "경북대 수영 빈자리 알림",
                 body: "알림이 정상적으로 설정되었습니다."
             )
             statusMessage = "테스트 알림을 보냈습니다."
-            await telemetry.info("Notification", "test_notification_sent")
+            await telemetry.info(
+                "Notification",
+                "test_notification_sent"
+            )
         } catch {
             await telemetry.error(
                 "Notification",
                 "test_notification_failed",
                 fields: ["error_type": errorType(error)]
             )
-            fail("알림 테스트 실패: \(error.localizedDescription)")
+            statusMessage = "알림 테스트 실패: \(error.localizedDescription)"
         }
     }
 
@@ -709,6 +728,10 @@ final class AppStore: ObservableObject {
         }
         if let urlError = error as? URLError {
             return "url_error_\(urlError.errorCode)"
+        }
+        let nsError = error as NSError
+        if !nsError.domain.isEmpty {
+            return "ns_error_\(nsError.domain)_\(nsError.code)"
         }
         return String(describing: type(of: error))
     }

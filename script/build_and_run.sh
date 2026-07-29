@@ -49,9 +49,9 @@ cat >"$INFO_PLIST" <<PLIST
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.0.16</string>
+  <string>1.0.17</string>
   <key>CFBundleVersion</key>
-  <string>17</string>
+  <string>18</string>
   <key>LSMinimumSystemVersion</key>
   <string>$MIN_SYSTEM_VERSION</string>
   <key>LSUIElement</key>
@@ -92,11 +92,17 @@ case "$MODE" in
     pgrep -x "$APP_NAME" >/dev/null
     echo "$APP_NAME is running"
     ;;
+  --notification-test|notification-test)
+    /usr/bin/open -n "$APP_BUNDLE" --args --test-notification
+    sleep 2
+    pgrep -x "$APP_NAME" >/dev/null
+    echo "$APP_NAME notification test requested"
+    ;;
   --package|package)
     echo "$APP_BUNDLE"
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--package]" >&2
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--notification-test|--package]" >&2
     exit 2
     ;;
 esac
