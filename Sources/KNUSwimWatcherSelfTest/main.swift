@@ -306,4 +306,8 @@ check(
     "기존 설정 신청 잠금 없음 마이그레이션"
 )
 
+let cachedRowsData = try JSONEncoder().encode(rows)
+let restoredRows = try JSONDecoder().decode([CourseRow].self, from: cachedRowsData)
+check(restoredRows == rows, "수영반 목록 캐시 직렬화")
+
 print("KNUSwimWatcher self-test: \(passed) checks passed")

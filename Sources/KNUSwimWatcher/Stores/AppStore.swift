@@ -9,6 +9,7 @@ final class AppStore: ObservableObject {
     }
     @Published var passwordDraft = ""
     @Published private(set) var candidateRows: [CourseRow] = []
+    @Published private(set) var candidateRowsCachedAt: Date?
     @Published private(set) var selectionStatuses: [SelectionStatus] = []
     @Published private(set) var connectionState: ConnectionState = .idle
     @Published private(set) var lastCheckedAt: Date?
@@ -22,6 +23,8 @@ final class AppStore: ObservableObject {
     private let telemetry = AppTelemetry.shared
     private let defaults = UserDefaults.standard
     private var availabilityState: [String: Bool]
+    private var candidateRowsCachedAccount: String?
+    private var passwordCache: (account: String, password: String)?
     private var monitorTask: Task<Void, Never>?
     private var didStart = false
 
@@ -34,6 +37,14 @@ final class AppStore: ObservableObject {
         }
         availabilityState = UserDefaults.standard
             .dictionary(forKey: Self.availabilityKey) as? [String: Bool] ?? [:]
+        if let cache = Self.loadCandidateRowsCache(
+            from: UserDefaults.standard,
+            account: settings.account
+        ) {
+            candidateRows = cache.rows
+            candidateRowsCachedAt = cache.savedAt
+            candidateRowsCachedAccount = cache.account
+        }
         settings.launchAtLogin = loginItem.isEnabled
         Task {
             await telemetry.info(
@@ -41,7 +52,8 @@ final class AppStore: ObservableObject {
                 "store_initialized",
                 fields: [
                     "monitoring_enabled": String(settings.monitoringEnabled),
-                    "selection_count": String(settings.selectedClasses.count)
+                    "selection_count": String(settings.selectedClasses.count),
+                    "cached_course_count": String(candidateRows.count)
                 ]
             )
         }
@@ -76,6 +88,13 @@ final class AppStore: ObservableObject {
         return lastCheckedAt.formatted(date: .omitted, time: .shortened)
     }
 
+    var candidateCacheText: String {
+        guard let candidateRowsCachedAt else {
+            return "저장된 목록 없음 · 새로고침 필요"
+        }
+        return "목록 저장: \(candidateRowsCachedAt.formatted(date: .abbreviated, time: .shortened))"
+    }
+
     var autoRegistrationSummary: String {
         if let result = settings.autoRegistrationResult {
             return result
@@ -97,9 +116,6 @@ final class AppStore: ObservableObject {
            !settings.account.isEmpty,
            !settings.selectedClasses.isEmpty {
             Task { await runCheck(manual: false) }
-        } else if !settings.account.isEmpty,
-                  settings.selectedClasses.isEmpty {
-            Task { await refreshCourses() }
         }
     }
 
@@ -117,9 +133,16 @@ final class AppStore: ObservableObject {
             return
         }
         do {
-            try keychain.save(password: passwordDraft, account: account)
+            let accountChanged = candidateRowsCachedAccount != nil
+                && candidateRowsCachedAccount != account
+            let password = passwordDraft
+            try keychain.save(password: password, account: account)
             settings.account = account
             passwordDraft = ""
+            passwordCache = (account, password)
+            if accountChanged {
+                clearCandidateRowsCache()
+            }
             defaults.set(true, forKey: "watcher.hasConfiguredAccount")
             statusMessage = "계정 정보를 Keychain에 저장했습니다."
             await telemetry.info("Auth", "credentials_saved_to_keychain")
@@ -153,12 +176,14 @@ final class AppStore: ObservableObject {
         defer { isBusy = false }
 
         do {
-            let password = try keychain.read(account: settings.account)
+            let password = try passwordForCurrentAccount()
             let rows = try await sportsClient.fetchCourseRows(
                 account: settings.account,
                 password: password
             )
             candidateRows = SportsClient.candidateRows(from: rows)
+            candidateRowsCachedAt = Date()
+            persistCandidateRowsCache()
             connectionState = .connected
             statusMessage = candidateRows.isEmpty
                 ? "로그인 성공. 현재 등록 목록에 수영반이 없습니다."
@@ -191,11 +216,16 @@ final class AppStore: ObservableObject {
     }
 
     func ensureCandidateRowsLoaded() async {
-        guard candidateRows.isEmpty else { return }
-        guard !isBusy else { return }
-        // Keep the refresh independent from SwiftUI's view-scoped `.task`.
-        // Closing or redrawing the tab must not cancel the network request.
-        Task { await refreshCourses() }
+        if candidateRowsCachedAt != nil {
+            await telemetry.debug(
+                "Monitor",
+                "course_cache_reused",
+                fields: ["candidate_count": String(candidateRows.count)]
+            )
+            return
+        }
+        statusMessage = "저장된 수영반 목록이 없습니다. 수영반 탭에서 새로고침을 눌러주세요."
+        await telemetry.info("Monitor", "course_cache_missing")
     }
 
     func addSelection(from row: CourseRow) {
@@ -468,7 +498,7 @@ final class AppStore: ObservableObject {
         defer { isBusy = false }
 
         do {
-            let password = try keychain.read(account: settings.account)
+            let password = try passwordForCurrentAccount()
             let stableCourseIDs = Set(
                 settings.selectedClasses.compactMap(\.courseID)
             )
@@ -772,6 +802,47 @@ final class AppStore: ObservableObject {
         defaults.set(availabilityState, forKey: Self.availabilityKey)
     }
 
+    private func passwordForCurrentAccount() throws -> String {
+        if let passwordCache, passwordCache.account == settings.account {
+            return passwordCache.password
+        }
+        let password = try keychain.read(account: settings.account)
+        passwordCache = (settings.account, password)
+        return password
+    }
+
+    private func persistCandidateRowsCache() {
+        guard let candidateRowsCachedAt, !settings.account.isEmpty else { return }
+        let cache = CandidateRowsCache(
+            account: settings.account,
+            savedAt: candidateRowsCachedAt,
+            rows: candidateRows
+        )
+        guard let data = try? JSONEncoder().encode(cache) else { return }
+        candidateRowsCachedAccount = settings.account
+        defaults.set(data, forKey: Self.candidateRowsCacheKey)
+    }
+
+    private func clearCandidateRowsCache() {
+        candidateRows = []
+        candidateRowsCachedAt = nil
+        candidateRowsCachedAccount = nil
+        defaults.removeObject(forKey: Self.candidateRowsCacheKey)
+    }
+
+    private static func loadCandidateRowsCache(
+        from defaults: UserDefaults,
+        account: String
+    ) -> CandidateRowsCache? {
+        guard !account.isEmpty,
+              let data = defaults.data(forKey: candidateRowsCacheKey),
+              let cache = try? JSONDecoder().decode(CandidateRowsCache.self, from: data),
+              cache.account == account else {
+            return nil
+        }
+        return cache
+    }
+
     private func errorType(_ error: Error) -> String {
         if let sportsError = error as? SportsClientError {
             return sportsError.diagnosticCode
@@ -800,4 +871,11 @@ final class AppStore: ObservableObject {
 
     private static let settingsKey = "watcher.settings.v1"
     private static let availabilityKey = "watcher.availability.v1"
+    private static let candidateRowsCacheKey = "watcher.candidate-rows.v1"
+
+    private struct CandidateRowsCache: Codable {
+        let account: String
+        let savedAt: Date
+        let rows: [CourseRow]
+    }
 }

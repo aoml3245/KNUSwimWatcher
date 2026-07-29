@@ -88,7 +88,7 @@ public struct WatcherSettings: Codable, Equatable, Sendable {
     }
 }
 
-public struct CourseRow: Identifiable, Hashable, Sendable {
+public struct CourseRow: Codable, Identifiable, Hashable, Sendable {
     public let id: String
     public let cells: [String]
     public let actions: [String]

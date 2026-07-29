@@ -78,6 +78,9 @@ private struct ClassSelectionView: View {
                     Text("감시 중 \(store.settings.selectedClasses.count)개 반")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Text(store.candidateCacheText)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
                 Spacer()
                 Button {
@@ -119,7 +122,13 @@ private struct ClassSelectionView: View {
             }
 
             GroupBox {
-                if rows.isEmpty {
+                if store.candidateRows.isEmpty {
+                    ContentUnavailableView(
+                        "저장된 수영반 목록이 없습니다",
+                        systemImage: "tray",
+                        description: Text("위의 새로고침을 한 번 누르면 이후에는 저장된 목록을 재사용합니다.")
+                    )
+                } else if rows.isEmpty {
                     ContentUnavailableView(
                         "조건에 맞는 수영반이 없습니다",
                         systemImage: "line.3.horizontal.decrease.circle",
