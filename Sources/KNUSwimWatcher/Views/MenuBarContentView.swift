@@ -6,7 +6,7 @@ struct MenuBarContentView: View {
     @ObservedObject var store: AppStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 Image(systemName: store.menuBarSymbol)
                     .font(.title2)
@@ -55,27 +55,55 @@ struct MenuBarContentView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                VStack(alignment: .leading, spacing: 7) {
-                    ForEach(store.selectionStatuses.prefix(4)) { status in
-                        HStack {
-                            Circle()
-                                .fill(status.availability.isAvailable ? Color.green : Color.gray)
-                                .frame(width: 7, height: 7)
-                            Text(shortTitle(status.name))
-                                .lineLimit(1)
-                            Spacer()
-                            Text(status.availability.shortText)
-                                .foregroundStyle(
-                                    status.availability.isAvailable ? .green : .secondary
-                                )
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Label(
+                            "감시 중인 반 \(store.settings.selectedClasses.count)개",
+                            systemImage: "eye"
+                        )
+                        .font(.caption.weight(.semibold))
+                        Spacer()
+                        if store.settings.selectedClasses.count > 8 {
+                            Text("스크롤")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
                         }
-                        .font(.caption)
                     }
-                    if store.selectionStatuses.isEmpty {
-                        Text("감시 중 \(store.settings.selectedClasses.count)개 반")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+
+                    ScrollView(.vertical) {
+                        LazyVStack(alignment: .leading, spacing: 3) {
+                            ForEach(store.settings.selectedClasses) { selection in
+                                let status = status(for: selection)
+                                HStack(spacing: 7) {
+                                    Circle()
+                                        .fill(
+                                            status?.availability.isAvailable == true
+                                                ? Color.green
+                                                : Color.gray
+                                        )
+                                        .frame(width: 6, height: 6)
+                                    Text(shortTitle(selection.name))
+                                        .lineLimit(1)
+                                        .layoutPriority(1)
+                                    Spacer(minLength: 6)
+                                    Text(status?.availability.shortText ?? "확인 전")
+                                        .lineLimit(1)
+                                        .foregroundStyle(
+                                            status?.availability.isAvailable == true
+                                                ? .green
+                                                : .secondary
+                                        )
+                                }
+                                .font(.caption2)
+                                .frame(height: 20)
+                                .help(selection.name)
+                            }
+                        }
                     }
+                    .frame(height: watchListHeight)
+                    .scrollIndicators(
+                        store.settings.selectedClasses.count > 8 ? .visible : .hidden
+                    )
                 }
             }
 
@@ -106,11 +134,19 @@ struct MenuBarContentView: View {
                 }
             }
         }
-        .padding(16)
+        .padding(14)
         .frame(width: 360)
         .task {
             store.start()
         }
+    }
+
+    private var watchListHeight: CGFloat {
+        min(CGFloat(store.settings.selectedClasses.count) * 23, 184)
+    }
+
+    private func status(for selection: WatchSelection) -> SelectionStatus? {
+        store.selectionStatuses.first { $0.id == selection.id }
     }
 
     private func shortTitle(_ value: String) -> String {
