@@ -283,6 +283,15 @@ check(
         == "rejected",
     "신청 마감 응답 판정"
 )
+check(
+    SportsClient.registrationBillIDs(
+        in: """
+        <a href="/doc/class_detail.php?BILL_SQNO=1111111111111111111">입금대기</a>
+        <a href='class_detail.php?BILL_SQNO=2222222222222222222'>입금완료</a>
+        """
+    ) == ["1111111111111111111", "2222222222222222222"],
+    "마이페이지 신청 번호 추출"
+)
 
 let legacySettingsJSON = """
 {"account":"legacy","selectedClasses":[],"monitoringEnabled":true}

@@ -122,37 +122,56 @@ public actor SportsClient {
             throw SportsClientError.pageStructureChanged
         }
 
+        let historyURL = baseURL.appending(path: "doc/class_confirm.php")
+        let historyBefore = try? await fetchFollowingScriptRedirects(
+            from: historyURL,
+            session: context.session,
+            referer: baseURL.appending(path: "doc/class_info5_confirm.php")
+        ).2
+        let billIDsBefore = historyBefore.map(Self.registrationBillIDs(in:)) ?? []
+
         var finalFields = Self.hiddenInputFields(in: confirmation)
         finalFields["pay_type"] = "V"
         await telemetry.info("Registration", "final_submission_started")
-        let resultHTML: String
+        var resultState = "unknown"
         do {
-            resultHTML = try await postForm(
+            let resultHTML = try await postForm(
                 to: baseURL.appending(path: "pages/register/virtual_bank_proc.php"),
                 fields: finalFields,
                 session: context.session,
                 referer: baseURL.appending(path: "doc/class_info5_confirm.php")
             )
+            resultState = Self.classifyRegistrationResult(resultHTML)
         } catch {
             await telemetry.error(
                 "Registration",
                 "final_submission_outcome_unknown",
                 fields: ["error_type": String(describing: type(of: error))]
             )
-            return .submittedUnverified
         }
 
-        let resultState = Self.classifyRegistrationResult(resultHTML)
         var historyContainsCourse = false
-        if let history = try? await fetchFollowingScriptRedirects(
-            from: baseURL.appending(path: "doc/class_confirm.php"),
-            session: context.session,
-            referer: baseURL.appending(path: "pages/register/virtual_bank_proc.php")
-        ).2 {
+        var historyContainsNewBill = false
+        for attempt in 0..<3 {
+            if attempt > 0 {
+                try? await Task.sleep(for: .seconds(1))
+            }
+            guard let history = try? await fetchFollowingScriptRedirects(
+                from: historyURL,
+                session: context.session,
+                referer: baseURL.appending(path: "pages/register/virtual_bank_proc.php")
+            ).2 else {
+                continue
+            }
+            let billIDsAfter = Self.registrationBillIDs(in: history)
+            historyContainsNewBill = !billIDsAfter.subtracting(billIDsBefore).isEmpty
             historyContainsCourse = history.contains(courseID)
                 || history.normalizedWhitespace.contains(candidate.lectureName.normalizedWhitespace)
+            if historyContainsNewBill || historyContainsCourse {
+                break
+            }
         }
-        if resultState == "success" || historyContainsCourse {
+        if resultState == "success" || historyContainsNewBill || historyContainsCourse {
             await telemetry.info("Registration", "final_submission_confirmed")
             return .submittedConfirmed
         }
@@ -800,6 +819,26 @@ public actor SportsClient {
             return "rejected"
         }
         return "unknown"
+    }
+
+    public nonisolated static func registrationBillIDs(
+        in html: String
+    ) -> Set<String> {
+        let pattern = #"class_detail\.php\?BILL_SQNO=([0-9]+)"#
+        guard let regex = try? NSRegularExpression(
+            pattern: pattern,
+            options: [.caseInsensitive]
+        ) else {
+            return []
+        }
+        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        return Set(regex.matches(in: html, range: range).compactMap { match in
+            guard match.numberOfRanges > 1,
+                  let valueRange = Range(match.range(at: 1), in: html) else {
+                return nil
+            }
+            return String(html[valueRange])
+        })
     }
 
     public nonisolated static func scriptRedirectTarget(in html: String) -> String? {
