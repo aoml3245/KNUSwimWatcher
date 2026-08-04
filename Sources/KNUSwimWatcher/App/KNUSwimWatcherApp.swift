@@ -1,4 +1,6 @@
 import AppKit
+import Darwin
+import OSLog
 import SwiftUI
 import UserNotifications
 import WatcherCore
@@ -32,7 +34,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 @main
 struct KNUSwimWatcherApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var store = AppStore()
+    @StateObject private var store: AppStore
+
+    init() {
+        guard SingleInstanceGuard.shared.acquire() else {
+            Logger(
+                subsystem: "com.woni.KNUSwimWatcher",
+                category: "Lifecycle"
+            ).info("duplicate_instance_blocked")
+            Darwin.exit(EXIT_SUCCESS)
+        }
+        _store = StateObject(wrappedValue: AppStore())
+    }
 
     var body: some Scene {
         MenuBarExtra {
