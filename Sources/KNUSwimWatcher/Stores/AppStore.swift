@@ -45,6 +45,21 @@ final class AppStore: ObservableObject {
             candidateRowsCachedAt = cache.savedAt
             candidateRowsCachedAccount = cache.account
         }
+        if settings.launchAtLogin,
+           !UserDefaults.standard.bool(forKey: Self.loginItemMigrationKey) {
+            do {
+                try loginItem.refreshEnabledRegistration()
+                UserDefaults.standard.set(true, forKey: Self.loginItemMigrationKey)
+            } catch {
+                Task {
+                    await telemetry.error(
+                        "Lifecycle",
+                        "login_item_registration_migration_failed",
+                        fields: ["error_type": errorType(error)]
+                    )
+                }
+            }
+        }
         settings.launchAtLogin = loginItem.isEnabled
         Task {
             await telemetry.info(
@@ -872,6 +887,7 @@ final class AppStore: ObservableObject {
     private static let settingsKey = "watcher.settings.v1"
     private static let availabilityKey = "watcher.availability.v1"
     private static let candidateRowsCacheKey = "watcher.candidate-rows.v1"
+    private static let loginItemMigrationKey = "watcher.login-item-registration-migrated.v2"
 
     private struct CandidateRowsCache: Codable {
         let account: String
